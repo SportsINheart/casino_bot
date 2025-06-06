@@ -25,6 +25,7 @@ type GameState struct {
 	BlackjackHand   []string
 	DealerHand      []string
 	RouletteBetType string
+	DiceBetType     string
 }
 
 var (
@@ -37,6 +38,10 @@ var (
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("🎰 Рулетка"),
 			tgbotapi.NewKeyboardButton("🎲 Блэкджек"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎲 Кости"),
+			tgbotapi.NewKeyboardButton("🎰 Слоты"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("💰 Баланс"),
@@ -75,6 +80,30 @@ var (
 		),
 	)
 
+	// Клавиатура для костей
+	diceKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎲 Четное"),
+			tgbotapi.NewKeyboardButton("🎲 Нечетное"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎲 <7"),
+			tgbotapi.NewKeyboardButton("🎲 =7"),
+			tgbotapi.NewKeyboardButton("🎲 >7"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🔙 Назад"),
+		),
+	)
+
+	// Клавиатура для слотов
+	slotsKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎰 Крутить"),
+			tgbotapi.NewKeyboardButton("🔙 Назад"),
+		),
+	)
+
 	// Клавиатура для ставок
 	betKeyboard = tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -92,6 +121,9 @@ var (
 	// Карточные масти и значения
 	suits  = []string{"♠", "♥", "♦", "♣"}
 	values = []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+
+	// Символы для слотов
+	slotSymbols = []string{"🍒", "🍋", "🍊", "🍇", "🍉", "7️⃣", "🔔", "💎"}
 )
 
 func main() {
@@ -141,6 +173,10 @@ func handleMessage(msg *tgbotapi.Message) {
 		startRoulette(userID)
 	case "🎲 Блэкджек":
 		startBlackjack(userID)
+	case "🎲 Кости":
+		startDice(userID)
+	case "🎰 Слоты":
+		startSlots(userID)
 	default:
 		handleGameInput(userID, text)
 	}
@@ -349,6 +385,162 @@ func handleBlackjackAction(chatID int64, text string) {
 	}
 }
 
+// Кости
+func startDice(chatID int64) {
+	gameStates[chatID] = &GameState{
+		CurrentGame: "dice",
+	}
+
+	msg := tgbotapi.NewMessage(chatID, "🎲 Выберите тип ставки в костях:")
+	msg.ReplyMarkup = diceKeyboard
+	bot.Send(msg)
+}
+
+func handleDiceBet(chatID int64, betType string) {
+	state := gameStates[chatID]
+	state.DiceBetType = betType
+
+	msg := tgbotapi.NewMessage(chatID, "💰 Введите сумму ставки или выберите из предложенных:")
+	msg.ReplyMarkup = betKeyboard
+	bot.Send(msg)
+}
+
+func processDiceBet(chatID int64, betAmount int) {
+	state := gameStates[chatID]
+	user := users[chatID]
+
+	if user.Balance < betAmount {
+		sendMessage(chatID, "⚠️ Недостаточно средств на балансе")
+		return
+	}
+
+	// Бросок костей
+	rand.Seed(time.Now().UnixNano())
+	dice1 := rand.Intn(6) + 1
+	dice2 := rand.Intn(6) + 1
+	total := dice1 + dice2
+
+	// Определение выигрыша
+	won := false
+	payout := 0
+	betType := state.DiceBetType
+
+	switch {
+	case betType == "🎲 Четное" && total%2 == 0:
+		won = true
+		payout = betAmount
+	case betType == "🎲 Нечетное" && total%2 == 1:
+		won = true
+		payout = betAmount
+	case betType == "🎲 <7" && total < 7:
+		won = true
+		payout = betAmount
+	case betType == "🎲 =7" && total == 7:
+		won = true
+		payout = betAmount * 4
+	case betType == "🎲 >7" && total > 7:
+		won = true
+		payout = betAmount
+	}
+
+	// Обновление баланса
+	if won {
+		user.Balance += payout
+	} else {
+		user.Balance -= betAmount
+	}
+
+	// Формирование результата
+	result := fmt.Sprintf("🎲 Результат: %d и %d (сумма: %d)\n", dice1, dice2, total)
+
+	if won {
+		result += fmt.Sprintf("🎉 Вы выиграли %d! Новый баланс: %d", payout, user.Balance)
+	} else {
+		result += fmt.Sprintf("😢 Вы проиграли %d. Новый баланс: %d", betAmount, user.Balance)
+	}
+
+	sendMessageWithKeyboard(chatID, result, mainKeyboard)
+	delete(gameStates, chatID)
+}
+
+// Слоты
+func startSlots(chatID int64) {
+	gameStates[chatID] = &GameState{
+		CurrentGame: "slots",
+	}
+
+	msg := tgbotapi.NewMessage(chatID, "🎰 Добро пожаловать в слоты!\nМинимальная ставка: 10\n\nВыберите сумму ставки:")
+	msg.ReplyMarkup = betKeyboard
+	bot.Send(msg)
+}
+
+func processSlotsBet(chatID int64, betAmount int) {
+	state := gameStates[chatID]
+	user := users[chatID]
+
+	if user.Balance < betAmount {
+		sendMessage(chatID, "⚠️ Недостаточно средств на балансе")
+		return
+	}
+
+	if betAmount < 10 {
+		sendMessage(chatID, "⚠️ Минимальная ставка 10")
+		return
+	}
+
+	state.BetAmount = betAmount
+
+	// Крутим слоты
+	rand.Seed(time.Now().UnixNano())
+	reels := make([]string, 3)
+	for i := 0; i < 3; i++ {
+		reels[i] = slotSymbols[rand.Intn(len(slotSymbols))]
+	}
+
+	// Проверка выигрыша
+	won := false
+	payout := 0
+
+	// Все три одинаковые
+	if reels[0] == reels[1] && reels[1] == reels[2] {
+		won = true
+		switch reels[0] {
+		case "7️⃣":
+			payout = betAmount * 10 // Джекпот за три семерки
+		case "💎":
+			payout = betAmount * 5
+		case "🔔":
+			payout = betAmount * 3
+		default:
+			payout = betAmount * 2
+		}
+	} else if reels[0] == reels[1] || reels[1] == reels[2] || reels[0] == reels[2] {
+		// Две одинаковые
+		won = true
+		payout = betAmount
+	}
+
+	// Обновление баланса
+	if won {
+		user.Balance += payout
+	} else {
+		user.Balance -= betAmount
+	}
+
+	// Формирование результата
+	result := fmt.Sprintf("🎰 [ %s | %s | %s ]\n", reels[0], reels[1], reels[2])
+
+	if won {
+		result += fmt.Sprintf("🎉 Вы выиграли %d! Новый баланс: %d", payout, user.Balance)
+	} else {
+		result += fmt.Sprintf("😢 Вы проиграли %d. Новый баланс: %d", betAmount, user.Balance)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, result)
+	msg.ReplyMarkup = slotsKeyboard
+	bot.Send(msg)
+}
+
 func showBlackjackOptions(chatID int64) {
 	state := gameStates[chatID]
 	playerTotal := calculateHand(state.BlackjackHand)
@@ -482,6 +674,40 @@ func handleGameInput(chatID int64, text string) {
 		}
 	case "blackjack":
 		handleBlackjackAction(chatID, text)
+	case "dice":
+		switch text {
+		case "🎲 Четное", "🎲 Нечетное", "🎲 <7", "🎲 =7", "🎲 >7":
+			handleDiceBet(chatID, text)
+		case "10", "50", "100", "200", "500":
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processDiceBet(chatID, betAmount)
+			}
+		default:
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processDiceBet(chatID, betAmount)
+			} else {
+				sendMessage(chatID, "⚠️ Неверная сумма ставки")
+			}
+		}
+	case "slots":
+		switch text {
+		case "🎰 Крутить":
+			if state.BetAmount > 0 {
+				processSlotsBet(chatID, state.BetAmount)
+			} else {
+				sendMessage(chatID, "💰 Введите сумму ставки или выберите из предложенных:")
+			}
+		case "10", "50", "100", "200", "500":
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processSlotsBet(chatID, betAmount)
+			}
+		default:
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processSlotsBet(chatID, betAmount)
+			} else {
+				sendMessage(chatID, "⚠️ Неверная сумма ставки")
+			}
+		}
 	}
 }
 
