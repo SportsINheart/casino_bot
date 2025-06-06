@@ -506,13 +506,13 @@ func processSlotsBet(chatID int64, betAmount int) {
 		won = true
 		switch reels[0] {
 		case "7️⃣":
-			payout = betAmount * 10 // Джекпот за три семерки
+			payout = betAmount * 100 // Джекпот за три семерки
 		case "💎":
-			payout = betAmount * 5
+			payout = betAmount * 50
 		case "🔔":
-			payout = betAmount * 3
+			payout = betAmount * 20
 		default:
-			payout = betAmount * 2
+			payout = betAmount * 10
 		}
 	} else if reels[0] == reels[1] || reels[1] == reels[2] || reels[0] == reels[2] {
 		// Две одинаковые
