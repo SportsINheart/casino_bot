@@ -20,25 +20,83 @@ type User struct {
 
 // GameState представляет состояние игры
 type GameState struct {
-	CurrentGame   string
-	BetAmount     int
-	BlackjackHand []string
-	DealerHand    []string
+	CurrentGame     string
+	BetAmount       int
+	BlackjackHand   []string
+	DealerHand      []string
+	RouletteBetType string
 }
 
 var (
 	users      = make(map[int64]*User)
 	gameStates = make(map[int64]*GameState)
 	bot        *tgbotapi.BotAPI
-)
 
-// Карточные масти и значения
-var suits = []string{"♠", "♥", "♦", "♣"}
-var values = []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+	// Основная клавиатура
+	mainKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎰 Рулетка"),
+			tgbotapi.NewKeyboardButton("🎲 Блэкджек"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("💰 Баланс"),
+			tgbotapi.NewKeyboardButton("❓ Помощь"),
+		),
+	)
+
+	// Клавиатура для рулетки
+	rouletteKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🔴 Красное"),
+			tgbotapi.NewKeyboardButton("⚫ Черное"),
+			tgbotapi.NewKeyboardButton("🟢 Зеро"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("⚪ Четное"),
+			tgbotapi.NewKeyboardButton("⚫ Нечетное"),
+			tgbotapi.NewKeyboardButton("1-12"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("13-24"),
+			tgbotapi.NewKeyboardButton("25-36"),
+			tgbotapi.NewKeyboardButton("🔙 Назад"),
+		),
+	)
+
+	// Клавиатура для блэкджека
+	blackjackKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("⬇️ Взять"),
+			tgbotapi.NewKeyboardButton("✋ Стоять"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("💰 Удвоить"),
+			tgbotapi.NewKeyboardButton("🔙 Назад"),
+		),
+	)
+
+	// Клавиатура для ставок
+	betKeyboard = tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("10"),
+			tgbotapi.NewKeyboardButton("50"),
+			tgbotapi.NewKeyboardButton("100"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("200"),
+			tgbotapi.NewKeyboardButton("500"),
+			tgbotapi.NewKeyboardButton("🔙 Назад"),
+		),
+	)
+
+	// Карточные масти и значения
+	suits  = []string{"♠", "♥", "♦", "♣"}
+	values = []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+)
 
 func main() {
 	var err error
-	bot, err = tgbotapi.NewBotAPI("8075891599:AAE3IUQ3YGpIrEcwsjkBc-rbageCGJ8xX_U")
+	bot, err = tgbotapi.NewBotAPI("7907157167:AAFbanlT69HoZ_67xyKf3scxD_A_gf9nRjI")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -75,88 +133,58 @@ func handleMessage(msg *tgbotapi.Message) {
 
 	// Обработка команд
 	switch text {
-	case "/start":
-		sendMessage(userID, "Добро пожаловать в казино-бот! Выберите игру:\n/roulette - Рулетка\n/blackjack - Блэкджек (21)\n/balance - Баланс")
-	case "/balance":
+	case "/start", "❓ Помощь", "🔙 Назад":
+		sendMainMenu(userID)
+	case "💰 Баланс":
 		sendBalance(userID)
-	case "/roulette":
+	case "🎰 Рулетка":
 		startRoulette(userID)
-	case "/blackjack":
+	case "🎲 Блэкджек":
 		startBlackjack(userID)
 	default:
 		handleGameInput(userID, text)
 	}
 }
 
-func handleGameInput(userID int64, text string) {
-	state, ok := gameStates[userID]
-	if !ok {
-		return
-	}
+func sendMainMenu(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "🎰 Добро пожаловать в Casino Bot! Выберите игру:")
+	msg.ReplyMarkup = mainKeyboard
+	bot.Send(msg)
+}
 
-	switch state.CurrentGame {
-	case "roulette":
-		handleRouletteBet(userID, text)
-	case "blackjack":
-		handleBlackjackAction(userID, text)
-	}
+func sendBalance(chatID int64) {
+	user := users[chatID]
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("💰 Ваш баланс: %d", user.Balance))
+	msg.ReplyMarkup = mainKeyboard
+	bot.Send(msg)
 }
 
 // Рулетка
-func startRoulette(userID int64) {
-	gameStates[userID] = &GameState{
+func startRoulette(chatID int64) {
+	gameStates[chatID] = &GameState{
 		CurrentGame: "roulette",
 	}
 
-	msg := "Ставки на рулетку!\n\n" +
-		"Вы можете ставить на:\n" +
-		"- Число (1-36) - выплата 35:1\n" +
-		"- Красное/Черное (red/black) - выплата 1:1\n" +
-		"- Четное/Нечетное (even/odd) - выплата 1:1\n" +
-		"- Первые 12, средние 12, последние 12 (1st12, 2nd12, 3rd12) - выплата 2:1\n\n" +
-		"Введите ставку в формате: <сумма> <тип ставки>\n" +
-		"Пример: 100 red\n\n" +
-		"Ваш баланс: " + strconv.Itoa(users[userID].Balance)
-
-	sendMessage(userID, msg)
+	msg := tgbotapi.NewMessage(chatID, "🎰 Выберите тип ставки в рулетке:")
+	msg.ReplyMarkup = rouletteKeyboard
+	bot.Send(msg)
 }
 
-func handleRouletteBet(userID int64, text string) {
-	parts := strings.Split(text, " ")
-	if len(parts) != 2 {
-		sendMessage(userID, "Неверный формат ставки. Пример: 100 red")
-		return
-	}
+func handleRouletteBet(chatID int64, betType string) {
+	state := gameStates[chatID]
+	state.RouletteBetType = betType
 
-	betAmount, err := strconv.Atoi(parts[0])
-	if err != nil || betAmount <= 0 {
-		sendMessage(userID, "Неверная сумма ставки")
-		return
-	}
+	msg := tgbotapi.NewMessage(chatID, "💰 Введите сумму ставки или выберите из предложенных:")
+	msg.ReplyMarkup = betKeyboard
+	bot.Send(msg)
+}
 
-	user := users[userID]
+func processRouletteBet(chatID int64, betAmount int) {
+	state := gameStates[chatID]
+	user := users[chatID]
+
 	if user.Balance < betAmount {
-		sendMessage(userID, "Недостаточно средств на балансе")
-		return
-	}
-
-	betType := strings.ToLower(parts[1])
-	validBets := map[string]bool{
-		"red": true, "black": true, "even": true, "odd": true,
-		"1st12": true, "2nd12": true, "3rd12": true,
-	}
-
-	// Проверка числовых ставок (1-36)
-	isNumberBet := false
-	if num, err := strconv.Atoi(betType); err == nil {
-		if num >= 1 && num <= 36 {
-			isNumberBet = true
-			validBets[betType] = true
-		}
-	}
-
-	if !validBets[betType] && !isNumberBet {
-		sendMessage(userID, "Неверный тип ставки")
+		sendMessage(chatID, "⚠️ Недостаточно средств на балансе")
 		return
 	}
 
@@ -168,30 +196,31 @@ func handleRouletteBet(userID int64, text string) {
 	// Определение выигрыша
 	won := false
 	payout := 0
+	betType := state.RouletteBetType
 
 	switch {
-	case isNumberBet && strconv.Itoa(winNumber) == betType:
+	case betType == "🟢 Зеро" && winNumber == 0:
 		won = true
 		payout = betAmount * 35
-	case betType == "red" && winColor == "red":
+	case betType == "🔴 Красное" && winColor == "red":
 		won = true
 		payout = betAmount
-	case betType == "black" && winColor == "black":
+	case betType == "⚫ Черное" && winColor == "black":
 		won = true
 		payout = betAmount
-	case betType == "even" && winNumber%2 == 0 && winNumber != 0:
+	case betType == "⚪ Четное" && winNumber%2 == 0 && winNumber != 0:
 		won = true
 		payout = betAmount
-	case betType == "odd" && winNumber%2 == 1:
+	case betType == "⚫ Нечетное" && winNumber%2 == 1:
 		won = true
 		payout = betAmount
-	case betType == "1st12" && winNumber >= 1 && winNumber <= 12:
+	case betType == "1-12" && winNumber >= 1 && winNumber <= 12:
 		won = true
 		payout = betAmount * 2
-	case betType == "2nd12" && winNumber >= 13 && winNumber <= 24:
+	case betType == "13-24" && winNumber >= 13 && winNumber <= 24:
 		won = true
 		payout = betAmount * 2
-	case betType == "3rd12" && winNumber >= 25 && winNumber <= 36:
+	case betType == "25-36" && winNumber >= 25 && winNumber <= 36:
 		won = true
 		payout = betAmount * 2
 	}
@@ -206,7 +235,7 @@ func handleRouletteBet(userID int64, text string) {
 	// Формирование результата
 	result := fmt.Sprintf("🎰 Результат: %d %s\n", winNumber, winColor)
 	if winNumber == 0 {
-		result = fmt.Sprintf("🎰 Результат: 0 (зеленый)\n")
+		result = "🎰 Результат: 0 (зеленый)\n"
 	}
 
 	if won {
@@ -215,117 +244,90 @@ func handleRouletteBet(userID int64, text string) {
 		result += fmt.Sprintf("😢 Вы проиграли %d. Новый баланс: %d", betAmount, user.Balance)
 	}
 
-	sendMessage(userID, result)
-	delete(gameStates, userID)
+	sendMessageWithKeyboard(chatID, result, mainKeyboard)
+	delete(gameStates, chatID)
 }
 
-func getColor(number int) string {
-	if number == 0 {
-		return "green"
-	}
-
-	redNumbers := []int{1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
-	for _, n := range redNumbers {
-		if n == number {
-			return "red"
-		}
-	}
-	return "black"
-}
-
-// Блэкджек (21)
-func startBlackjack(userID int64) {
-	user := users[userID]
-
-	// Проверка минимальной ставки
+// Блэкджек
+func startBlackjack(chatID int64) {
+	user := users[chatID]
 	minBet := 10
+
 	if user.Balance < minBet {
-		sendMessage(userID, fmt.Sprintf("Минимальная ставка %d. Недостаточно средств.", minBet))
+		sendMessage(chatID, fmt.Sprintf("⚠️ Минимальная ставка %d. Недостаточно средств.", minBet))
 		return
 	}
 
-	gameStates[userID] = &GameState{
+	gameStates[chatID] = &GameState{
 		CurrentGame:   "blackjack",
 		BlackjackHand: []string{drawCard(), drawCard()},
 		DealerHand:    []string{drawCard(), "??"},
 	}
 
-	msg := "🎲 Блэкджек (21)\n\n" +
-		"Ваши карты: " + strings.Join(gameStates[userID].BlackjackHand, " ") + "\n" +
-		"Сумма: " + strconv.Itoa(calculateHand(gameStates[userID].BlackjackHand)) + "\n\n" +
-		"Карта дилера: " + gameStates[userID].DealerHand[0] + " ??" + "\n\n" +
-		"Выберите действие:\n" +
-		"<ставка> - Сделать ставку (мин. " + strconv.Itoa(minBet) + ")\n" +
-		"/hit - Взять карту\n" +
-		"/stand - Остановиться\n" +
-		"/double - Удвоить (если 2 карты)\n\n" +
-		"Ваш баланс: " + strconv.Itoa(user.Balance)
+	msg := fmt.Sprintf("🎲 Блэкджек\n\nВаши карты: %s\nСумма: %d\n\nКарта дилера: %s ??\n\nСделайте ставку:",
+		strings.Join(gameStates[chatID].BlackjackHand, " "),
+		calculateHand(gameStates[chatID].BlackjackHand),
+		gameStates[chatID].DealerHand[0])
 
-	sendMessage(userID, msg)
+	sendMessageWithKeyboard(chatID, msg, betKeyboard)
 }
 
-func handleBlackjackAction(userID int64, text string) {
-	state := gameStates[userID]
-	user := users[userID]
+func handleBlackjackAction(chatID int64, text string) {
+	state := gameStates[chatID]
+	user := users[chatID]
 
 	// Обработка ставки
 	if betAmount, err := strconv.Atoi(text); err == nil {
 		minBet := 10
 		if betAmount < minBet {
-			sendMessage(userID, fmt.Sprintf("Минимальная ставка %d", minBet))
+			sendMessage(chatID, fmt.Sprintf("⚠️ Минимальная ставка %d", minBet))
 			return
 		}
 
 		if user.Balance < betAmount {
-			sendMessage(userID, "Недостаточно средств")
+			sendMessage(chatID, "⚠️ Недостаточно средств")
 			return
 		}
 
 		state.BetAmount = betAmount
-		sendMessage(userID, fmt.Sprintf("Ставка %d принята. Выберите действие: /hit /stand /double", betAmount))
+		showBlackjackOptions(chatID)
 		return
 	}
 
 	// Проверка наличия ставки
 	if state.BetAmount == 0 {
-		sendMessage(userID, "Сначала сделайте ставку")
+		sendMessage(chatID, "⚠️ Сначала сделайте ставку")
 		return
 	}
 
 	switch text {
-	case "/hit":
+	case "⬇️ Взять":
 		state.BlackjackHand = append(state.BlackjackHand, drawCard())
 		playerTotal := calculateHand(state.BlackjackHand)
 
 		if playerTotal > 21 {
 			user.Balance -= state.BetAmount
-			sendMessage(userID, fmt.Sprintf("Перебор (%d)! Вы проиграли %d. Новый баланс: %d",
-				playerTotal, state.BetAmount, user.Balance))
-			delete(gameStates, userID)
+			sendMessageWithKeyboard(chatID,
+				fmt.Sprintf("💥 Перебор (%d)! Вы проиграли %d. Новый баланс: %d",
+					playerTotal, state.BetAmount, user.Balance),
+				mainKeyboard)
+			delete(gameStates, chatID)
 			return
 		}
 
-		msg := "Ваши карты: " + strings.Join(state.BlackjackHand, " ") + "\n" +
-			"Сумма: " + strconv.Itoa(playerTotal) + "\n\n" +
-			"Выберите действие:\n/hit /stand"
+		showBlackjackOptions(chatID)
 
-		if len(state.BlackjackHand) == 2 {
-			msg += " /double"
-		}
+	case "✋ Стоять":
+		completeBlackjackGame(chatID)
 
-		sendMessage(userID, msg)
-
-	case "/stand":
-		completeBlackjackGame(userID)
-
-	case "/double":
+	case "💰 Удвоить":
 		if len(state.BlackjackHand) != 2 {
-			sendMessage(userID, "Удвоение возможно только при 2 картах")
+			sendMessage(chatID, "⚠️ Удвоение возможно только при 2 картах")
 			return
 		}
 
 		if user.Balance < state.BetAmount*2 {
-			sendMessage(userID, "Недостаточно средств для удвоения")
+			sendMessage(chatID, "⚠️ Недостаточно средств для удвоения")
 			return
 		}
 
@@ -335,19 +337,32 @@ func handleBlackjackAction(userID int64, text string) {
 
 		if playerTotal > 21 {
 			user.Balance -= state.BetAmount
-			sendMessage(userID, fmt.Sprintf("Перебор (%d) после удвоения! Вы проиграли %d. Новый баланс: %d",
-				playerTotal, state.BetAmount, user.Balance))
+			sendMessageWithKeyboard(chatID,
+				fmt.Sprintf("💥 Перебор (%d) после удвоения! Вы проиграли %d. Новый баланс: %d",
+					playerTotal, state.BetAmount, user.Balance),
+				mainKeyboard)
 		} else {
-			completeBlackjackGame(userID)
+			completeBlackjackGame(chatID)
 		}
 
-		delete(gameStates, userID)
+		delete(gameStates, chatID)
 	}
 }
 
-func completeBlackjackGame(userID int64) {
-	state := gameStates[userID]
-	user := users[userID]
+func showBlackjackOptions(chatID int64) {
+	state := gameStates[chatID]
+	playerTotal := calculateHand(state.BlackjackHand)
+
+	msg := fmt.Sprintf("🎲 Ваши карты: %s\nСумма: %d\n\nВыберите действие:",
+		strings.Join(state.BlackjackHand, " "),
+		playerTotal)
+
+	sendMessageWithKeyboard(chatID, msg, blackjackKeyboard)
+}
+
+func completeBlackjackGame(chatID int64) {
+	state := gameStates[chatID]
+	user := users[chatID]
 
 	// Открываем карту дилера
 	state.DealerHand[1] = drawCard()
@@ -364,18 +379,18 @@ func completeBlackjackGame(userID int64) {
 	// Определение результата
 	result := ""
 	if playerTotal > 21 {
-		result = fmt.Sprintf("Перебор (%d)! Вы проиграли %d.", playerTotal, state.BetAmount)
+		result = fmt.Sprintf("💥 Перебор (%d)! Вы проиграли %d.", playerTotal, state.BetAmount)
 		user.Balance -= state.BetAmount
 	} else if dealerTotal > 21 {
-		result = fmt.Sprintf("Дилер перебрал (%d)! Вы выиграли %d.", dealerTotal, state.BetAmount)
+		result = fmt.Sprintf("🎉 Дилер перебрал (%d)! Вы выиграли %d.", dealerTotal, state.BetAmount)
 		user.Balance += state.BetAmount
 	} else if playerTotal > dealerTotal {
-		result = fmt.Sprintf("Вы победили (%d против %d)! Выигрыш %d.", playerTotal, dealerTotal, state.BetAmount)
+		result = fmt.Sprintf("🎉 Вы победили (%d против %d)! Выигрыш %d.", playerTotal, dealerTotal, state.BetAmount)
 		user.Balance += state.BetAmount
 	} else if playerTotal == dealerTotal {
-		result = fmt.Sprintf("Ничья (%d против %d). Ставка возвращена.", playerTotal, dealerTotal)
+		result = fmt.Sprintf("🤝 Ничья (%d против %d). Ставка возвращена.", playerTotal, dealerTotal)
 	} else {
-		result = fmt.Sprintf("Вы проиграли (%d против %d). Потеря %d.", playerTotal, dealerTotal, state.BetAmount)
+		result = fmt.Sprintf("😢 Вы проиграли (%d против %d). Потеря %d.", playerTotal, dealerTotal, state.BetAmount)
 		user.Balance -= state.BetAmount
 	}
 
@@ -386,8 +401,8 @@ func completeBlackjackGame(userID int64) {
 		result + "\n" +
 		"Новый баланс: " + strconv.Itoa(user.Balance)
 
-	sendMessage(userID, msg)
-	delete(gameStates, userID)
+	sendMessageWithKeyboard(chatID, msg, mainKeyboard)
+	delete(gameStates, chatID)
 }
 
 func drawCard() string {
@@ -429,13 +444,55 @@ func calculateHand(hand []string) int {
 	return total
 }
 
+func getColor(number int) string {
+	if number == 0 {
+		return "green"
+	}
+
+	redNumbers := []int{1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+	for _, n := range redNumbers {
+		if n == number {
+			return "red"
+		}
+	}
+	return "black"
+}
+
+func handleGameInput(chatID int64, text string) {
+	state, ok := gameStates[chatID]
+	if !ok {
+		return
+	}
+
+	switch state.CurrentGame {
+	case "roulette":
+		switch text {
+		case "🔴 Красное", "⚫ Черное", "🟢 Зеро", "⚪ Четное", "⚫ Нечетное", "1-12", "13-24", "25-36":
+			handleRouletteBet(chatID, text)
+		case "10", "50", "100", "200", "500":
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processRouletteBet(chatID, betAmount)
+			}
+		default:
+			if betAmount, err := strconv.Atoi(text); err == nil {
+				processRouletteBet(chatID, betAmount)
+			} else {
+				sendMessage(chatID, "⚠️ Неверная сумма ставки")
+			}
+		}
+	case "blackjack":
+		handleBlackjackAction(chatID, text)
+	}
+}
+
 // Вспомогательные функции
 func sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	bot.Send(msg)
 }
 
-func sendBalance(userID int64) {
-	user := users[userID]
-	sendMessage(userID, fmt.Sprintf("Ваш баланс: %d", user.Balance))
+func sendMessageWithKeyboard(chatID int64, text string, keyboard tgbotapi.ReplyKeyboardMarkup) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	bot.Send(msg)
 }
